@@ -46,6 +46,114 @@ def _format_decimal(value: Decimal) -> str:
 	return sign + (text if text else "0")
 
 
+class RoundedButton(tk.Canvas):
+	def __init__(
+		self,
+		master,
+		*,
+		text: str,
+		command,
+		width: int,
+		height: int,
+		bg: str,
+		fg: str,
+		activebackground: str | None = None,
+		activeforeground: str | None = None,
+		font=("Segoe UI", 20),
+	) -> None:
+		super().__init__(
+			master,
+			width=width,
+			height=height,
+			bg="#000000",
+			highlightthickness=0,
+			bd=0,
+		)
+		self._text = text
+		self._command = command
+		self._width = width
+		self._height = height
+		self._font = font
+		self._bg = bg
+		self._fg = fg
+		self._active_bg = activebackground if activebackground is not None else bg
+		self._active_fg = activeforeground if activeforeground is not None else fg
+		self._pressed = False
+
+		self.configure(cursor="hand2")
+		self._draw()
+
+		self.bind("<ButtonPress-1>", self._on_press)
+		self.bind("<ButtonRelease-1>", self._on_release)
+		self.bind("<Leave>", self._on_leave)
+
+	def _draw(self) -> None:
+		self.delete("all")
+		pad = 2
+		x0, y0 = pad, pad
+		x1, y1 = self._width - pad, self._height - pad
+		w = x1 - x0
+		h = y1 - y0
+
+		fill = self._active_bg if self._pressed else self._bg
+		outline = fill
+
+		# Circle when square-ish, pill when wide.
+		if w <= h + 2:
+			self.create_oval(x0, y0, x1, y1, fill=fill, outline=outline, tags=("shape",))
+		else:
+			r = h / 2
+			self.create_oval(x0, y0, x0 + 2 * r, y1, fill=fill, outline=outline, tags=("shape",))
+			self.create_oval(x1 - 2 * r, y0, x1, y1, fill=fill, outline=outline, tags=("shape",))
+			self.create_rectangle(x0 + r, y0, x1 - r, y1, fill=fill, outline=outline, tags=("shape",))
+
+		fg = self._active_fg if self._pressed else self._fg
+		self.create_text(
+			self._width / 2,
+			self._height / 2,
+			text=self._text,
+			fill=fg,
+			font=self._font,
+			tags=("text",),
+		)
+
+	def _hit_test(self, x: int, y: int) -> bool:
+		return 0 <= x <= self._width and 0 <= y <= self._height
+
+	def _on_press(self, event: tk.Event) -> None:
+		self._pressed = True
+		self._draw()
+
+	def _on_release(self, event: tk.Event) -> None:
+		was_pressed = self._pressed
+		self._pressed = False
+		self._draw()
+		if was_pressed and self._hit_test(int(event.x), int(event.y)):
+			self._command()
+
+	def _on_leave(self, _event: tk.Event) -> None:
+		if self._pressed:
+			self._pressed = False
+			self._draw()
+
+	def configure(self, cnf=None, **kw):
+		# Support a subset of Button-like options so the rest of the app can
+		# update styles/text without knowing this is a Canvas.
+		if "text" in kw:
+			self._text = kw.pop("text")
+		if "bg" in kw:
+			self._bg = kw.pop("bg")
+		if "fg" in kw:
+			self._fg = kw.pop("fg")
+		if "activebackground" in kw:
+			self._active_bg = kw.pop("activebackground")
+		if "activeforeground" in kw:
+			self._active_fg = kw.pop("activeforeground")
+		result = super().configure(cnf or {}, **kw)
+		self._draw()
+		return result
+
+
 class CalculatorApp:
 	def __init__(self, root: tk.Tk) -> None:
 		self.root = root
@@ -96,8 +204,8 @@ class CalculatorApp:
 
 		# Button layout
 		# Each row: (label, kind, command)
-		self.clear_button: tk.Button | None = None
-		self.op_buttons: dict[str, tk.Button] = {}
+		self.clear_button: RoundedButton | None = None
+		self.op_buttons: dict[str, RoundedButton] = {}
 
 		layout = [
 			[("AC", "func", self.on_clear), ("±", "func", self.on_toggle_sign), ("%", "func", self.on_percent), ("÷", "op", lambda: self.on_operator("/"))],
@@ -111,14 +219,14 @@ class CalculatorApp:
 		for c in range(4):
 			self.root.grid_columnconfigure(c, minsize=92)
 		for r in range(1, 6):
-			self.root.grid_rowconfigure(r, minsize=84)
+			self.root.grid_rowconfigure(r, minsize=92)
 
 		# Create buttons
 		for r, row in enumerate(layout, start=1):
 			col = 0
 			for (label, kind, cmd) in row:
 				if r == 5 and label == "0":
-					btn = self._make_button(label, kind, cmd)
+					btn = self._make_button(label, kind, cmd, wide=True)
 					btn.grid(row=r, column=col, columnspan=2, sticky="nsew", padx=6, pady=6)
 					col += 2
 					continue
@@ -143,7 +251,7 @@ class CalculatorApp:
 				if label == "AC":
 					self.clear_button = btn
 
-	def _make_button(self, label: str, kind: str, cmd) -> tk.Button:
+	def _make_button(self, label: str, kind: str, cmd, *, wide: bool = False) -> RoundedButton:
 		if kind == "digit":
 			bg = self.colors["digit_bg"]
 			fg = self.colors["digit_fg"]
@@ -154,16 +262,33 @@ class CalculatorApp:
 			bg = self.colors["op_bg"]
 			fg = self.colors["op_fg"]
 
-		return tk.Button(
+		# Size tuned to look more like iPhone circles/pills.
+		height = 84
+		width = 84
+		if wide:
+			width = 84 * 2 + 12
+			return RoundedButton(
+				self.root,
+				text=label,
+				command=cmd,
+				width=width,
+				height=height,
+				bg=bg,
+				fg=fg,
+				activebackground=bg,
+				activeforeground=fg,
+				font=("Segoe UI", 20),
+			)
+		return RoundedButton(
 			self.root,
 			text=label,
 			command=cmd,
+			width=width,
+			height=height,
 			bg=bg,
 			fg=fg,
 			activebackground=bg,
 			activeforeground=fg,
-			bd=0,
-			highlightthickness=0,
 			font=("Segoe UI", 20),
 		)
 
